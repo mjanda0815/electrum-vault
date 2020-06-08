@@ -43,6 +43,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple, Union, NamedTuple, Sequ
 from .i18n import _
 from .bip32 import BIP32Node
 from .crypto import sha256
+from .three_keys.script import LockingScript
 from .util import (NotEnoughFunds, UserCancelled, profiler,
                    format_satoshis, format_fee_satoshis, NoDynamicFeeEstimates,
                    WalletFileException, BitcoinException,
@@ -2255,7 +2256,23 @@ class Multisig_Wallet(Deterministic_Wallet):
         return ''.join(sorted(self.get_master_public_keys()))
 
 
-wallet_types = ['standard', 'multisig', 'imported']
+class TwoKeysWallet(Simple_Deterministic_Wallet):
+    def __init__(self, storage: WalletStorage, *, config: SimpleConfig):
+        self.locking_script = LockingScript(recovery_key=storage.get('recovery_key'))
+        self.wallet_type = storage.get('wallet_type')
+        super().__init__(storage=storage, config=config)
+
+    def load_keystore(self):
+        super().load_keystore()
+        # workaround for txin_type
+        self.txin_type = 'p2sh'
+
+    def pubkeys_to_address(self, pubkey):
+        redeem_script = self.locking_script.get_script_for_2keys(pubkey)
+        return bitcoin.redeem_script_to_address(self.txin_type, redeem_script)
+
+
+wallet_types = ['2Keys', '3Keys', 'standard', 'multisig', 'imported']
 
 def register_wallet_type(category):
     wallet_types.append(category)
@@ -2264,7 +2281,9 @@ wallet_constructors = {
     'standard': Standard_Wallet,
     'old': Standard_Wallet,
     'xpub': Standard_Wallet,
-    'imported': Imported_Wallet
+    'imported': Imported_Wallet,
+    '2Keys': TwoKeysWallet,
+    '3Keys': None
 }
 
 def register_constructor(wallet_type, constructor):

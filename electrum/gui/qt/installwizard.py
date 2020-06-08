@@ -520,6 +520,40 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         action = c_values[clayout.selected_index()]
         return action
 
+    @wizard_dialog
+    def get_recovery_key(self, run_next):
+        vbox = QVBoxLayout()
+        label = QLabel()
+        label.setText(_('Recovery key'))
+
+        line = QLineEdit()
+        vbox.addWidget(label)
+        vbox.addWidget(line)
+        self.exec_layout(vbox, _('Some title'))
+
+        return line.text()
+
+    @wizard_dialog
+    def get_recovery_and_instant_key(self, run_next):
+        vbox = QVBoxLayout()
+        label_recovery = QLabel()
+        label_recovery.setText(_('Recovery key'))
+
+        line_recovery = QLineEdit()
+        vbox.addWidget(label_recovery)
+        vbox.addWidget(line_recovery)
+
+        label_instant = QLabel()
+        label_instant.setText(_('Instant key'))
+
+        line_instant = QLineEdit()
+        vbox.addWidget(label_instant)
+        vbox.addWidget(line_instant)
+
+        self.exec_layout(vbox, _('Some title'))
+
+        return line_recovery.text(), line_instant.text()
+
     def query_choice(self, msg, choices):
         """called by hardware wallets"""
         clayout = ChoicesLayout(msg, choices)
