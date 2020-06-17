@@ -41,6 +41,7 @@ import binascii
 
 from . import ecc, bitcoin, constants, segwit_addr, bip32
 from .bip32 import BIP32Node
+from .three_keys.script import LockingScript
 from .util import profiler, to_bytes, bh2u, bfh, chunks, is_hex_str
 from .bitcoin import (TYPE_ADDRESS, TYPE_SCRIPT, hash_160,
                       hash160_to_p2sh, hash160_to_p2pkh, hash_to_segwit_addr,
@@ -655,11 +656,24 @@ class Transaction:
         if _type == 'p2pk':
             return script
         elif _type == 'p2sh':
-            # put op_0 before script
+            # hardcoded modification of the wallet
+            rec_key = 'ae12'
+            op_1 = '51'
+            ls = LockingScript(recovery_key=rec_key)
+            print(pubkeys)
+            redeem = ls.get_script_for_2keys(pubkeys[0])
+            redeem = op_1 + redeem
+
             script = '00' + script
-            redeem_script = multisig_script(pubkeys, txin.num_sig)
-            script += push_script(redeem_script)
+            script += push_script(redeem)
+
             return script
+
+            # put op_0 before script
+            # script = '00' + script
+            redeem_script = multisig_script(pubkeys, txin.num_sig)
+            # script += push_script(redeem_script)
+            # return script
         elif _type == 'p2pkh':
             script += push_script(pubkeys[0])
             return script
@@ -1047,6 +1061,7 @@ class PartialTxInput(TxInput, PSBTSection):
         self.utxo = None  # type: Optional[Transaction]
         self.witness_utxo = None  # type: Optional[TxOutput]
         self.part_sigs = {}  # type: Dict[bytes, bytes]  # pubkey -> sig
+        self.part_sigs2 = {}
         self.sighash = None  # type: Optional[int]
         self.bip32_paths = {}  # type: Dict[bytes, Tuple[bytes, Sequence[int]]]  # pubkey -> (xpub_fingerprint, path)
         self.redeem_script = None  # type: Optional[bytes]
@@ -1270,6 +1285,7 @@ class PartialTxInput(TxInput, PSBTSection):
             return  # already finalized
         if self.is_complete():
             self.script_sig = bfh(Transaction.input_script(self))
+            # todo check witness serialization in case of 2key wallet
             self.witness = bfh(Transaction.serialize_witness(self))
             clear_fields_when_finalized()
 
@@ -1806,11 +1822,19 @@ class PartialTransaction(Transaction):
 
     def add_signature_to_txin(self, *, txin_idx: int, signing_pubkey: str, sig: str):
         txin = self._inputs[txin_idx]
+        dict_ = {bfh(signing_pubkey): bfh(sig)}
         txin.part_sigs[bfh(signing_pubkey)] = bfh(sig)
         # force re-serialization
         txin.script_sig = None
         txin.witness = None
         self.invalidate_ser_cache()
+        self._add_sigs_to_txin(txin_idx, signing_pubkey, sig)
+
+    def _add_sigs_to_txin(self, txin_idx: int, signing_pubkey: str, sig: str):
+        txin = self._inputs[txin_idx]
+        txin.part_sigs2[bfh(signing_pubkey)] = bfh(sig)
+        print('+++ txin parts_sigs', txin.part_sigs2, self)
+        print('+++', self.inputs()[txin_idx].part_sigs2)
 
     def add_info_from_wallet(self, wallet: 'Abstract_Wallet', *,
                              include_xpubs_and_full_paths: bool = False) -> None:

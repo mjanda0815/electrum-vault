@@ -889,6 +889,8 @@ class Network(Logger):
 
     @best_effort_reliable
     async def broadcast_transaction(self, tx: 'Transaction', *, timeout=None) -> None:
+        ser_ = tx.serialize()
+        print('++++ serialized transaction ', ser_)
         if timeout is None:
             timeout = self.get_network_timeout_seconds(NetworkTimeout.Urgent)
         try:

@@ -52,7 +52,7 @@ from .util import (NotEnoughFunds, UserCancelled, profiler,
 from .util import PR_TYPE_ONCHAIN, PR_TYPE_LN
 from .simple_config import SimpleConfig
 from .bitcoin import (COIN, is_address, address_to_script,
-                      is_minikey, relayfee, dust_threshold)
+                      is_minikey, relayfee, dust_threshold, push_script)
 from .crypto import sha256d
 from . import keystore
 from .keystore import load_keystore, Hardware_KeyStore, KeyStore
@@ -1335,6 +1335,10 @@ class Abstract_Wallet(AddressSynchronizer):
         txout.is_change = self.is_change(address)
         if isinstance(self, Multisig_Wallet):
             txout.num_sig = self.m
+        # perhaps to delete
+        print('+++++ wallet type ', type(self) )
+        if isinstance(self, TwoKeysWallet):
+            txout.num_sig = 1
         self._add_txinout_derivation_info(txout, address, only_der_suffix=only_der_suffix)
         if txout.redeem_script is None:
             try:
@@ -2269,7 +2273,58 @@ class TwoKeysWallet(Simple_Deterministic_Wallet):
 
     def pubkeys_to_address(self, pubkey):
         redeem_script = self.locking_script.get_script_for_2keys(pubkey)
-        return bitcoin.redeem_script_to_address(self.txin_type, redeem_script)
+        address = bitcoin.redeem_script_to_address(self.txin_type, redeem_script)
+        print(f'{pubkey} {redeem_script} {address}')
+        return address
+
+    def pubkeys_to_scriptcode(self, pubkeys: Sequence[str]) -> str:
+        return transaction.multisig_script(sorted(pubkeys), 1)
+
+    def get_redeem_script(self, address: str) -> Optional[str]:
+        print('+++ get redeem script')
+        pub_key = super().get_public_key(address)
+        script_code = self.pubkeys_to_scriptcode([pub_key])
+        return self.locking_script.get_script_for_2keys(pub_key)
+
+    def _add_correct_unlocking_script(self, tx: Transaction) -> Transaction:
+        op_1 = '51'
+        print('+++ correction')
+        print(tx)
+        for txin in tx.inputs():
+            pubkey = txin.pubkeys[0]
+            sig = txin.part_sigs2.get(pubkey, b'').hex()
+            redeem = self.locking_script.get_script_for_2keys(pubkey.hex())
+            script = '00' + push_script(sig) + push_script(op_1 + redeem)
+            txin.script_sig = bytes.fromhex(script)
+
+
+
+    def sign_transaction(self, tx: Transaction, password) -> Optional[PartialTransaction]:
+        if self.is_watching_only():
+            return
+        if not isinstance(tx, PartialTransaction):
+            return
+        # add info to a temporary tx copy; including xpubs
+        # and full derivation paths as hw keystores might want them
+        tmp_tx = copy.deepcopy(tx)
+        tmp_tx.add_info_from_wallet(self, include_xpubs_and_full_paths=True)
+        print('+++ before', tmp_tx.inputs()[0].script_sig)
+        # sign. start with ready keystores.
+        for k in sorted(self.get_keystores(), key=lambda ks: ks.ready_to_sign(), reverse=True):
+            try:
+                if k.can_sign(tmp_tx):
+                    k.sign_transaction(tmp_tx, password)
+            except UserCancelled:
+                continue
+        print('+++ after', tmp_tx.inputs()[0].script_sig)
+        self._add_correct_unlocking_script(tmp_tx)
+        # remove sensitive info; then copy back details from temporary tx
+        tmp_tx.remove_xpubs_and_bip32_paths()
+        tx.combine_with_other_psbt(tmp_tx)
+        tx.add_info_from_wallet(self, include_xpubs_and_full_paths=False)
+
+        return tx
+
 
 
 wallet_types = ['2Keys', '3Keys', 'standard', 'multisig', 'imported']
