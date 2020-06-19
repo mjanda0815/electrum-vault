@@ -189,7 +189,7 @@ class BaseWizard(Logger):
 
     def two_keys(self):
         def on_two_keys(recovery_pub_key):
-            self.data['recovery_key'] = recovery_pub_key
+            self.data['recovery_pubkey'] = recovery_pub_key
             self.run('choose_keystore')
         self.get_recovery_key(run_next=on_two_keys)
 

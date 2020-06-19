@@ -199,9 +199,6 @@ class Software_KeyStore(KeyStore):
         if keypairs:
             tx.sign(keypairs)
 
-        for item in tx.inputs():
-            print('**** sig', item.part_sigs)
-
     def update_password(self, old_password, new_password):
         raise NotImplementedError()  # implemented by subclasses
 

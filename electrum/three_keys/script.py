@@ -1,68 +1,106 @@
-from electrum.bitcoin import opcodes, var_int
+from typing import List
+
+from electrum.bitcoin import opcodes, push_script
+from electrum.three_keys.multisig_generator import MultisigScriptGenerator
 
 
-def _get_var_int_of_key(key: str) -> bytes:
-    byte_string = bytes.fromhex(key)
-    key_len = var_int(len(byte_string))
-    return bytes.fromhex(key_len)
+class ThreeKeysError(Exception):
+    pass
 
 
-class LockingScript:
-    def __init__(self, recovery_key: str, instant_key: str = None):
-        self.recovery_key = recovery_key
-        self.recovery_key_len_in_var_int: bytes = _get_var_int_of_key(recovery_key)
-        self.instant_key = instant_key
-        if instant_key is not None:
-            self.instant_key_len_in_var_int: bytes = _get_var_int_of_key(instant_key)
+class TwoKeysScriptGenerator(MultisigScriptGenerator):
+    def __init__(self, recovery_pubkey: str):
+        self.recovery_pubkey = recovery_pubkey
+        self._recovery_alert_flag = None
 
-    def is_instant(self):
-        return self.instant_key is not None
+    def get_redeem_script(self, public_keys: List[str]) -> str:
+        if not isinstance(public_keys, list) or len(public_keys) != 1:
+            raise ThreeKeysError(f"Wrong input type! Expected list not '{public_keys}'")
 
-    def get_script_for_2keys(self, pub_key: str) -> str:
-        pub_key_var_len = _get_var_int_of_key(pub_key)
+        pub_key = public_keys[0]
+        return (
+                opcodes.OP_IF.hex() +
+                opcodes.OP_1.hex() +
+                opcodes.OP_ELSE.hex() +
+                opcodes.OP_2.hex() +
+                opcodes.OP_ENDIF.hex() +
 
-        script = (
-            bytes([opcodes.OP_IF]) +
-            bytes([opcodes.OP_1]) +
-            bytes([opcodes.OP_ELSE]) +
-            bytes([opcodes.OP_2]) +
-            bytes([opcodes.OP_ENDIF]) +
+                push_script(pub_key) +
+                push_script(self.recovery_pubkey) +
 
-            pub_key_var_len +
-            bytes.fromhex(pub_key) +
-
-            self.recovery_key_len_in_var_int +
-            bytes.fromhex(self.recovery_key) +
-
-            bytes([opcodes.OP_2]) +
-            bytes([opcodes.OP_CHECKMULTISIG])
+                opcodes.OP_2.hex() +
+                opcodes.OP_CHECKMULTISIG.hex()
         )
-        return script.hex()
 
-    def get_script_for_3keys(self, pub_key: str) -> str:
-        pub_key_var_len = _get_var_int_of_key(pub_key)
-
-        script = (
-                bytes([opcodes.OP_IF]) +
-                bytes([opcodes.OP_1]) +
-                bytes([opcodes.OP_ELSE]) +
-                bytes([opcodes.OP_IF]) +
-                bytes([opcodes.OP_2]) +
-                bytes([opcodes.OP_ELSE]) +
-                bytes([opcodes.OP_3]) +
-                bytes([opcodes.OP_ENDIF]) +
-                bytes([opcodes.OP_ENDIF]) +
-
-                pub_key_var_len +
-                bytes.fromhex(pub_key) +
-
-                self.instant_key_len_in_var_int +
-                bytes.fromhex(self.instant_key) +
-
-                self.recovery_key_len_in_var_int +
-                bytes.fromhex(self.recovery_key) +
-
-                bytes([opcodes.OP_3]) +
-                bytes([opcodes.OP_CHECKMULTISIG])
+    def get_script_sig(self, signatures: List[str], public_keys: List[str]) -> str:
+        if self._recovery_alert_flag is None:
+            raise ThreeKeysError('Recovery/alert flag not set!')
+        sigs = ''.join(push_script(sig) for sig in signatures)
+        return (
+            opcodes.OP_0.hex() +
+            sigs +
+            self._recovery_alert_flag +
+            push_script(self.get_redeem_script(public_keys))
         )
-        return script.hex()
+
+    def set_alert(self):
+        # 1 of 2
+        self._recovery_alert_flag = opcodes.OP_1.hex()
+
+    def set_recovery(self):
+        # 2 of 2
+        self._recovery_alert_flag = opcodes.OP_0.hex()
+
+
+class ThreeKeysScriptGenerator(MultisigScriptGenerator):
+    def __init__(self, recovery_pubkey: str, instant_pubkey: str):
+        self.recovery_pubkey = recovery_pubkey
+        self.instant_pubkey = instant_pubkey
+        self._instant_recovery_alert_flag = None
+
+    def get_redeem_script(self, public_keys: List[str]) -> str:
+        if not isinstance(public_keys, list) or len(public_keys) != 1:
+            raise ThreeKeysError(f"Wrong input type! Expected list not '{public_keys}'")
+
+        pub_key = public_keys[0]
+        return (
+                opcodes.OP_IF.hex() +
+                opcodes.OP_1.hex() +
+                opcodes.OP_ELSE.hex() +
+                opcodes.OP_IF.hex() +
+                opcodes.OP_2.hex() +
+                opcodes.OP_ELSE.hex() +
+                opcodes.OP_3.hex() +
+                opcodes.OP_ENDIF.hex() +
+                opcodes.OP_ENDIF.hex() +
+
+                push_script(pub_key) +
+                push_script(self.instant_pubkey) +
+                push_script(self.recovery_pubkey) +
+
+                opcodes.OP_3.hex() +
+                opcodes.OP_CHECKMULTISIG.hex()
+        )
+
+    def get_script_sig(self, signatures: List[str], public_keys: List[str]) -> str:
+        if self._instant_recovery_alert_flag is None:
+            raise ThreeKeysError('Recovery/alert/instant flag not set!')
+        sigs = ''.join(push_script(sig) for sig in signatures)
+        return (
+            opcodes.OP_0.hex() +
+            sigs +
+            self._instant_recovery_alert_flag +
+            push_script(self.get_redeem_script(public_keys))
+        )
+
+    def set_alert(self):
+        # 1 of 3
+        self._instant_recovery_alert_flag = opcodes.OP_1.hex()
+
+    def set_recovery(self):
+        # 3 of 3
+        self._instant_recovery_alert_flag = opcodes.OP_0.hex() + opcodes.OP_0.hex()
+
+    def set_instant(self):
+        # 2 of 3
+        self._instant_recovery_alert_flag = opcodes.OP_1.hex() + opcodes.OP_0.hex()
