@@ -44,6 +44,7 @@ from .i18n import _
 from .bip32 import BIP32Node
 from .crypto import sha256
 from .three_keys.script import TwoKeysScriptGenerator
+from .three_keys.transaction import TxType
 from .util import (NotEnoughFunds, UserCancelled, profiler,
                    format_satoshis, format_fee_satoshis, NoDynamicFeeEstimates,
                    WalletFileException, BitcoinException,
@@ -1083,7 +1084,7 @@ class Abstract_Wallet(AddressSynchronizer):
         max_conf = -1
         h = self.db.get_addr_history(address)
         needs_spv_check = not self.config.get("skipmerklecheck", False)
-        for tx_hash, tx_height in h:
+        for tx_hash, tx_height, *__ in h:
             if needs_spv_check:
                 tx_age = self.get_tx_height(tx_hash).conf
             else:
@@ -1847,10 +1848,10 @@ class Imported_Wallet(Simple_Wallet):
             for addr in self.db.get_history():
                 details = self.db.get_addr_history(addr)
                 if addr == address:
-                    for tx_hash, height in details:
+                    for tx_hash, height, *__ in details:
                         transactions_to_remove.add(tx_hash)
                 else:
-                    for tx_hash, height in details:
+                    for tx_hash, height, *__ in details:
                         transactions_new.add(tx_hash)
             transactions_to_remove -= transactions_new
             self.db.remove_addr_history(address)
@@ -2257,14 +2258,30 @@ class Multisig_Wallet(Deterministic_Wallet):
 
 
 class TwoKeysWallet(Simple_Deterministic_Wallet):
+    TX_STATUS_INDEX_SHIFT = 10
+    TX_TYPES_LIKE_STANDARD = (
+        TxType.STANDARD,
+        TxType.INSTANT,
+        TxType.RECOVERY,
+    )
+
     def __init__(self, storage: WalletStorage, *, config: SimpleConfig):
-        self.multisig_script_generator = TwoKeysScriptGenerator(recovery_pubkey=storage.get('recovery_pubkey'))
+        # wallet type has to be set before base class init
         self.wallet_type = storage.get('wallet_type')
         super().__init__(storage=storage, config=config)
+        self.multisig_script_generator = TwoKeysScriptGenerator(recovery_pubkey=storage.get('recovery_pubkey'))
+        # set default for alert
+        self.set_alert()
+
+    def set_alert(self):
+        self.multisig_script_generator.set_alert()
+
+    def set_recovery(self):
+        self.multisig_script_generator.set_recovery()
 
     def load_keystore(self):
         super().load_keystore()
-        # workaround for txin_type
+        # force set of txin_type
         self.txin_type = 'p2sh'
 
     def pubkeys_to_address(self, pubkey):
@@ -2275,9 +2292,31 @@ class TwoKeysWallet(Simple_Deterministic_Wallet):
         pubkey = super().get_public_key(address)
         return self.multisig_script_generator.get_redeem_script([pubkey])
 
-    def sign_transaction(self, tx: Transaction, password) -> Optional[PartialTransaction]:
-        self.multisig_script_generator.set_alert()
+    def get_tx_status(self, tx_hash, tx_mined_info: TxMinedInfo):
+        status, status_str = super().get_tx_status(tx_hash, tx_mined_info)
+        if status_str == 'unknown':
+            return status, status_str
 
+        tx = self.db.get_transaction(tx_hash)
+
+        if tx.tx_type in self.TX_TYPES_LIKE_STANDARD:
+            return status, status_str
+
+        confirmations = tx_mined_info.conf
+        if tx.tx_type == TxType.ALERT:
+            # unconfirmed alert
+            if confirmations == 0:
+                return self.TX_STATUS_INDEX_SHIFT + 0, status_str
+            elif confirmations < 144:
+                return  self.TX_STATUS_INDEX_SHIFT + 1, status_str
+            elif confirmations == 144:
+                return self.TX_STATUS_INDEX_SHIFT + 2, status_str
+        elif tx.tx_type == TxType.RECOVERED:
+            return self.TX_STATUS_INDEX_SHIFT + 3, status_str
+        else:
+            raise ValueError(f'Unknown transaction type {tx.tx_type}')
+
+    def sign_transaction(self, tx: Transaction, password) -> Optional[PartialTransaction]:
         if self.is_watching_only():
             return
         if not isinstance(tx, PartialTransaction):
@@ -2285,7 +2324,7 @@ class TwoKeysWallet(Simple_Deterministic_Wallet):
         # add info to a temporary tx copy; including xpubs
         # and full derivation paths as hw keystores might want them
         tmp_tx = copy.deepcopy(tx)
-
+        # update tmp tx
         tmp_tx.multisig_script_generator = self.multisig_script_generator
         tmp_tx.update_inputs()
 
@@ -2300,14 +2339,13 @@ class TwoKeysWallet(Simple_Deterministic_Wallet):
                 continue
         # remove sensitive info; then copy back details from temporary tx
         tmp_tx.remove_xpubs_and_bip32_paths()
-
+        # update tx
         tx.multisig_script_generator = self.multisig_script_generator
         tx.update_inputs()
 
         tx.combine_with_other_psbt(tmp_tx)
         tx.add_info_from_wallet(self, include_xpubs_and_full_paths=False)
         return tx
-
 
 
 wallet_types = ['2Keys', '3Keys', 'standard', 'multisig', 'imported']
@@ -2321,6 +2359,7 @@ wallet_constructors = {
     'xpub': Standard_Wallet,
     'imported': Imported_Wallet,
     '2Keys': TwoKeysWallet,
+    # todo add 3Keys class definition
     '3Keys': None
 }
 

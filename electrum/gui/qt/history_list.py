@@ -76,6 +76,13 @@ TX_ICONS = [
     "clock4.png",
     "clock5.png",
     "confirmed.png",
+#     todo missing icons add they
+#     alert/recovered icons
+    "a_unconfirmed.png",
+    "a_pending.png",
+    "a_confirmed.png",
+    "a_recovered.png",
+
 ]
 
 class HistoryColumns(IntEnum):

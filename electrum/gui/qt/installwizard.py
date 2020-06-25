@@ -526,9 +526,11 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         label = QLabel()
         label.setText(_('Recovery key'))
 
+        # todo add key validation
         line = QLineEdit()
         vbox.addWidget(label)
         vbox.addWidget(line)
+        # todo change title
         self.exec_layout(vbox, _('Some title'))
 
         return line.text()
@@ -539,6 +541,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         label_recovery = QLabel()
         label_recovery.setText(_('Recovery key'))
 
+        # todo add key validation
         line_recovery = QLineEdit()
         vbox.addWidget(label_recovery)
         vbox.addWidget(line_recovery)
@@ -549,7 +552,7 @@ class InstallWizard(QDialog, MessageBoxMixin, BaseWizard):
         line_instant = QLineEdit()
         vbox.addWidget(label_instant)
         vbox.addWidget(line_instant)
-
+        # todo change title
         self.exec_layout(vbox, _('Some title'))
 
         return line_recovery.text(), line_instant.text()
