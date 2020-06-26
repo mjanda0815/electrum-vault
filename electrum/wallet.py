@@ -2316,6 +2316,17 @@ class TwoKeysWallet(Simple_Deterministic_Wallet):
         else:
             raise ValueError(f'Unknown transaction type {tx.tx_type}')
 
+    def get_spendable_coins(self, domain, *, nonlocal_only=False) -> Sequence[PartialTxInput]:
+        utxos = super().get_spendable_coins(domain=domain, nonlocal_only=nonlocal_only)
+
+        filtered_utxos = []
+        for utxo in utxos:
+            tx_hex = utxo.prevout.txid.hex()
+            tx = self.db.get_transaction(tx_hex)
+            if tx.tx_type in self.TX_TYPES_LIKE_STANDARD:
+                filtered_utxos.append(utxo)
+        return filtered_utxos
+
     def sign_transaction(self, tx: Transaction, password) -> Optional[PartialTransaction]:
         if self.is_watching_only():
             return
